@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual Environment
+.venv/
+
+# Environment Variables
+.env
+
+# SQLite Database
+*.db
+
+# Processed Data
+data/processed/*.csv
+
+# Trained Models
+data/models/*
+!data/models/.gitkeep
+
+# VS Code
+.vscode/
