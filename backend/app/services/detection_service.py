@@ -21,6 +21,10 @@ from app.ml.webpage_features import extract_webpage_features
 from app.ml.feature_merger import merge_features
 from app.ml.predictor import predict
 
+from app.ml.webpage_defaults import (
+    get_default_webpage_features,
+)
+
 
 def detect_url(url: str) -> dict:
     """
@@ -44,12 +48,11 @@ def detect_url(url: str) -> dict:
 
     scraped = scrape_url(url)
 
-    if scraped.get("error"):
+    webpage_available = not bool(
+        scraped.get("error")
+    )
 
-        return {
-            "url": url,
-            "error": scraped["error"],
-        }
+    scrape_error = scraped.get("error")
 
     # ----------------------------------------
     # 3. Extract URL features
@@ -63,10 +66,16 @@ def detect_url(url: str) -> dict:
     # 4. Extract webpage features
     # ----------------------------------------
 
-    webpage_features = extract_webpage_features(
-        scraped["url"],
-        scraped["html"],
-    )
+    if webpage_available:
+
+        webpage_features = extract_webpage_features(
+            scraped["url"],
+            scraped["html"],
+        )
+
+    else:
+
+        webpage_features = get_default_webpage_features()
 
     # ----------------------------------------
     # 5. Merge features
@@ -91,13 +100,54 @@ def detect_url(url: str) -> dict:
 
     nlp_result = analyze_url(url)
 
+        # ----------------------------------------
+    # 8. Final risk assessment
     # ----------------------------------------
-    # 8. Combine results
+
+    flags = nlp_result.get(
+        "flags",
+        []
+    )
+
+    brand_similarity = nlp_result.get(
+        "brand_similarity"
+    )
+
+    risk_level = ml_result[
+        "risk_level"
+    ]
+
+    # A non-legitimate brand match is a strong
+    # phishing indicator, especially when the webpage
+    # itself could not be reached.
+    brand_impersonation = (
+        brand_similarity is not None
+        and not brand_similarity.get(
+            "is_legitimate",
+            True
+        )
+    )
+
+    if brand_impersonation:
+
+        risk_level = "HIGH"
+
+    # ----------------------------------------
+    # 9. Combine results
     # ----------------------------------------
 
     return {
         "url": url,
 
+        "webpage_available": webpage_available,
+
+        "scan_mode": (
+            "FULL"
+            if webpage_available
+            else "URL_ONLY"
+        ),
+
+        # Raw ML result
         "prediction": ml_result[
             "prediction"
         ],
@@ -106,23 +156,17 @@ def detect_url(url: str) -> dict:
             "phishing_probability"
         ],
 
-        "risk_level": ml_result[
-            "risk_level"
-        ],
+        # Final risk after combining ML + NLP
+        "risk_level": risk_level,
 
-        "flags": nlp_result.get(
-            "flags",
-            []
-        ),
+        "flags": flags,
 
         "urgency_terms": nlp_result.get(
             "urgency_terms",
             []
         ),
 
-        "brand_similarity": nlp_result.get(
-            "brand_similarity"
-        ),
+        "brand_similarity": brand_similarity,
 
         "title": nlp_result.get(
             "title"
@@ -132,5 +176,5 @@ def detect_url(url: str) -> dict:
             "has_password_field"
         ),
 
-        "error": None,
+        "error": scrape_error,
     }

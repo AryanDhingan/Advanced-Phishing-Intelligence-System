@@ -302,35 +302,36 @@ def analyze_url(url: str) -> Dict:
 
     scraped = scrape_url(url)
 
-    if scraped["error"] is not None:
-        return {
-            "url": scraped["url"],
-            "title": scraped["title"],
-            "has_password_field": scraped["has_password_field"],
-            "flags": [],
-            "urgency_terms": [],
-            "brand_similarity": None,
-            "error": scraped["error"],
-        }
+    scrape_error = scraped.get("error")
 
     flags: List[str] = []
+    urgency_terms: List[str] = []
 
-    urgency_flags, urgency_terms = detect_urgency_flags(
-        f"{scraped['title']} {scraped['text']}"
+    # Brand similarity works directly from the URL,
+    # so it can still run even when the webpage is unreachable.
+    brand_match = detect_brand_similarity(
+        scraped["url"]
     )
-
-    flags.extend(urgency_flags)
-
-    if scraped["has_password_field"]:
-        flags.append("password_field")
-
-    brand_match = detect_brand_similarity(scraped["url"])
 
     if brand_match is not None:
 
         if not brand_match["is_legitimate"]:
 
-            flags.append(f"brand_impersonation:{brand_match['brand']}")
+            flags.append(
+                f"brand_impersonation:{brand_match['brand']}"
+            )
+
+    # Webpage-based NLP is only available when scraping succeeds.
+    if scrape_error is None:
+
+        urgency_flags, urgency_terms = detect_urgency_flags(
+            f"{scraped['title']} {scraped['text']}"
+        )
+
+        flags.extend(urgency_flags)
+
+        if scraped["has_password_field"]:
+            flags.append("password_field")
 
     return {
         "url": scraped["url"],
@@ -339,5 +340,5 @@ def analyze_url(url: str) -> Dict:
         "flags": flags,
         "urgency_terms": urgency_terms,
         "brand_similarity": brand_match,
-        "error": None,
+        "error": scrape_error,
     }
