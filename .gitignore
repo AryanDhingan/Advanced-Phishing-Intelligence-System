@@ -17,5 +17,9 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 
-data/models/*
-!data/models/.gitkeep   
+# Model artifacts
+backend/data/models/*
+!backend/data/models/.gitkeep
+!backend/data/models/model.pkl
+!backend/data/models/feature_columns.pkl
+!backend/data/models/confusion_matrix.png

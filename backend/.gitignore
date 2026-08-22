@@ -18,6 +18,9 @@ data/processed/*.csv
 # Trained Models
 data/models/*
 !data/models/.gitkeep
+!data/models/model.pkl
+!data/models/feature_columns.pkl
+!data/models/confusion_matrix.png
 
 # VS Code
 .vscode/
