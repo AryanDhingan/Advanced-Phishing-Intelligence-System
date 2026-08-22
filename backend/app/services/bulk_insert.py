@@ -1,28 +1,21 @@
 from sqlalchemy.orm import Session
 
 from app.db.models import URL
-from app.db.models import Feature
 
 
 def save_batch(
     session: Session,
-    url_objects: list[URL],
-    feature_objects: list[Feature]
+    url_objects: list[URL]
 ) -> None:
     """
-    Save a batch of URL and Feature objects.
+    Save a batch of URL objects.
+    Their Feature objects are automatically
+    persisted because of the ORM relationship.
     """
 
     try:
 
         session.add_all(url_objects)
-
-        session.flush()
-
-        for feature, url in zip(feature_objects, url_objects):
-            feature.url_id = url.id
-
-        session.add_all(feature_objects)
 
         session.commit()
 
