@@ -11,6 +11,9 @@ class ScanResponse(BaseModel):
     phishing_probability: float | None = None
     risk_level: str | None = None
 
+    webpage_available: bool = False
+    scan_mode: str = "FULL"
+
     flags: list = []
     urgency_terms: list = []
 
