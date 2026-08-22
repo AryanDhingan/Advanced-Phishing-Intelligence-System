@@ -1,17 +1,6 @@
-from app.nlp.scraper import scrape_url
-
-from app.ml.feature_extractor import (
-    extract_url_features,
-)
-
-from app.ml.webpage_features import (
-    extract_webpage_features,
-)
-
-from app.ml.feature_merger import (
-    merge_features,
-)
-
+from app.ml.feature_extractor import extract_url_features
+from app.ml.webpage_defaults import get_default_webpage_features
+from app.ml.feature_merger import merge_features
 from app.ml.predictor import predict
 
 
@@ -21,30 +10,27 @@ print("========================================")
 print("ML PREDICTION TEST")
 print("========================================")
 
-scraped = scrape_url(url)
 
-if scraped["error"]:
-    raise RuntimeError(
-        scraped["error"]
-    )
+# Use URL features directly.
+# No external webpage request is required.
+url_features = extract_url_features(url)
 
-url_features = extract_url_features(
-    scraped["url"]
-)
 
-webpage_features = extract_webpage_features(
-    scraped["url"],
-    scraped["html"],
-)
+# Use default webpage features because the predictor
+# should be testable even when a webpage is unavailable.
+webpage_features = get_default_webpage_features()
+
 
 merged_features = merge_features(
     url_features,
     webpage_features,
 )
 
+
 result = predict(
     merged_features
 )
+
 
 print("URL:", url)
 
