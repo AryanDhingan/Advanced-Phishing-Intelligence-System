@@ -1,0 +1,656 @@
+"""
+URL Intelligence Layer.
+
+Analyzes URL-level indicators independently from the ML model.
+
+The purpose of this layer is to identify suspicious characteristics
+that an ML model may underestimate, such as:
+
+- Brand impersonation
+- Suspicious keywords
+- Digit substitution
+- IP-based domains
+- Excessive subdomains
+- URL obfuscation
+- Suspicious TLDs
+- Excessive URL length
+- Suspicious path structure
+"""
+
+import re
+from urllib.parse import urlparse
+
+from app.utils.url_utils import extract_domain
+
+
+# ---------------------------------------------------------
+# Known brands
+# ---------------------------------------------------------
+
+KNOWN_BRANDS = {
+    "paypal": "paypal.com",
+    "google": "google.com",
+    "microsoft": "microsoft.com",
+    "apple": "apple.com",
+    "amazon": "amazon.com",
+    "facebook": "facebook.com",
+    "instagram": "instagram.com",
+    "linkedin": "linkedin.com",
+    "netflix": "netflix.com",
+    "whatsapp": "whatsapp.com",
+    "twitter": "twitter.com",
+    "dropbox": "dropbox.com",
+    "adobe": "adobe.com",
+    "steam": "steampowered.com",
+}
+
+
+# ---------------------------------------------------------
+# Suspicious keywords
+# ---------------------------------------------------------
+
+SUSPICIOUS_KEYWORDS = {
+    "login",
+    "signin",
+    "sign-in",
+    "verify",
+    "verification",
+    "account",
+    "secure",
+    "security",
+    "update",
+    "confirm",
+    "confirmation",
+    "password",
+    "credential",
+    "wallet",
+    "payment",
+    "billing",
+    "recover",
+    "unlock",
+    "suspend",
+    "suspended",
+    "authentication",
+    "authenticate",
+}
+
+
+# ---------------------------------------------------------
+# Suspicious TLDs
+# ---------------------------------------------------------
+
+SUSPICIOUS_TLDS = {
+    "tk",
+    "ml",
+    "ga",
+    "cf",
+    "gq",
+    "top",
+    "xyz",
+    "click",
+    "download",
+    "zip",
+    "review",
+    "country",
+    "work",
+}
+
+
+# ---------------------------------------------------------
+# Digit substitution patterns
+# ---------------------------------------------------------
+
+LEET_TRANSLATION = str.maketrans(
+    {
+        "0": "o",
+        "1": "i",
+        "3": "e",
+        "4": "a",
+        "5": "s",
+        "7": "t",
+    }
+)
+
+
+def normalize_brand_candidate(value: str) -> str:
+    """
+    Normalize a domain string for basic brand impersonation detection.
+
+    Example:
+
+        paypa1 -> paypai
+
+    The comparison also checks common digit substitutions separately.
+    """
+
+    value = value.lower()
+
+    return value.translate(
+        LEET_TRANSLATION
+    )
+
+
+def detect_ip_domain(domain: str) -> bool:
+    """
+    Detect whether the domain is an IPv4 address.
+    """
+
+    ipv4_pattern = (
+        r"^(?:\d{1,3}\.){3}\d{1,3}$"
+    )
+
+    return bool(
+        re.match(
+            ipv4_pattern,
+            domain,
+        )
+    )
+
+
+def detect_brand_impersonation(
+    domain: str,
+) -> dict | None:
+    """
+    Detect possible brand impersonation.
+
+    Handles:
+    - Exact legitimate brand domains
+    - Brand names embedded in suspicious domains
+    - Common digit substitutions such as:
+        paypa1 -> paypal
+        micr0soft -> microsoft
+    """
+
+    domain_lower = domain.lower()
+
+    # Remove the TLD and inspect the registrable domain.
+    domain_parts = domain_lower.split(".")
+
+    if len(domain_parts) < 2:
+        return None
+
+    domain_name = domain_parts[-2]
+
+    # Ignore very short domains for brand matching.
+    # This prevents false positives such as:
+    # example.com -> x
+    if len(domain_name) < 3:
+        return None
+
+    for brand, legitimate_domain in KNOWN_BRANDS.items():
+
+        brand_lower = brand.lower()
+
+        # -------------------------------------------------
+        # Exact legitimate domain
+        # -------------------------------------------------
+
+        if domain_lower == legitimate_domain:
+
+            return {
+                "brand": brand,
+                "legitimate_domain": legitimate_domain,
+                "domain": domain_name,
+                "reason": "legitimate_brand_domain",
+                "is_legitimate": True,
+            }
+
+        # -------------------------------------------------
+        # Legitimate subdomain
+        # -------------------------------------------------
+
+        if domain_lower.endswith(
+            "." + legitimate_domain
+        ):
+
+            return {
+                "brand": brand,
+                "legitimate_domain": legitimate_domain,
+                "domain": domain_name,
+                "reason": "legitimate_brand_domain",
+                "is_legitimate": True,
+            }
+
+        # -------------------------------------------------
+        # Brand directly appears in domain
+        #
+        # paypal-login-security.com
+        # secure-paypal.com
+        # -------------------------------------------------
+
+        if brand_lower in domain_name:
+
+            return {
+                "brand": brand,
+                "legitimate_domain": legitimate_domain,
+                "domain": domain_name,
+                "reason": "brand_in_suspicious_domain",
+                "is_legitimate": False,
+            }
+
+        # -------------------------------------------------
+        # Detect common digit substitutions
+        #
+        # paypa1 -> paypal
+        # micr0soft -> microsoft
+        # app1e -> apple
+        # -------------------------------------------------
+
+        digit_normalized = (
+            domain_name
+            .replace("0", "o")
+            .replace("1", "l")
+            .replace("3", "e")
+            .replace("4", "a")
+            .replace("5", "s")
+            .replace("7", "t")
+        )
+
+        if brand_lower in digit_normalized:
+
+            return {
+                "brand": brand,
+                "legitimate_domain": legitimate_domain,
+                "domain": domain_name,
+                "reason": "possible_brand_typo",
+                "is_legitimate": False,
+            }
+
+    return None
+
+
+def detect_suspicious_keywords(
+    url: str,
+) -> list[str]:
+    """
+    Find suspicious security-related words in the URL.
+    """
+
+    url_lower = url.lower()
+
+    found = []
+
+    for keyword in SUSPICIOUS_KEYWORDS:
+
+        if keyword in url_lower:
+
+            found.append(
+                keyword
+            )
+
+    return sorted(
+        found
+    )
+
+
+def detect_suspicious_tld(
+    domain: str,
+) -> bool:
+    """
+    Detect potentially suspicious TLDs.
+    """
+
+    parts = domain.lower().split(".")
+
+    if len(parts) < 2:
+        return False
+
+    tld = parts[-1]
+
+    return tld in SUSPICIOUS_TLDS
+
+
+def calculate_url_length_score(
+    url: str,
+) -> int:
+    """
+    Give a small intelligence score for unusually long URLs.
+    """
+
+    length = len(url)
+
+    if length >= 200:
+        return 15
+
+    if length >= 120:
+        return 10
+
+    if length >= 80:
+        return 5
+
+    return 0
+
+
+def calculate_subdomain_score(
+    domain: str,
+) -> int:
+    """
+    Give a small score for excessive subdomains.
+
+    IP addresses are excluded because their numeric
+    components must not be interpreted as subdomains.
+    """
+
+    if detect_ip_domain(domain):
+        return 0
+
+    parts = domain.split(".")
+
+    subdomain_count = max(
+        len(parts) - 2,
+        0,
+    )
+
+    if subdomain_count >= 4:
+        return 15
+
+    if subdomain_count >= 3:
+        return 10
+
+    if subdomain_count >= 2:
+        return 5
+
+    return 0
+
+
+def detect_obfuscation(
+    url: str,
+) -> list[str]:
+    """
+    Detect common URL obfuscation patterns.
+    """
+
+    indicators = []
+
+    if "%" in url:
+
+        indicators.append(
+            "encoded_characters"
+        )
+
+    if "@" in url:
+
+        indicators.append(
+            "at_symbol"
+        )
+
+    if "//" in url.split("://", 1)[-1]:
+
+        indicators.append(
+            "nested_url_separator"
+        )
+
+    if "\\x" in url.lower():
+
+        indicators.append(
+            "hex_encoding"
+        )
+
+    return indicators
+
+
+def detect_suspicious_path(
+    parsed_url,
+) -> list[str]:
+    """
+    Detect suspicious path characteristics.
+    """
+
+    path = (
+        parsed_url.path
+        or ""
+    ).lower()
+
+    indicators = []
+
+    if path.count("/") >= 5:
+
+        indicators.append(
+            "deep_url_path"
+        )
+
+    if re.search(
+        r"(login|signin|verify|account|secure|update|confirm)",
+        path,
+    ):
+
+        indicators.append(
+            "sensitive_path"
+        )
+
+    return indicators
+
+
+def analyze_url_intelligence(
+    url: str,
+) -> dict:
+    """
+    Perform complete URL intelligence analysis.
+
+    Returns:
+        indicators
+        score
+        brand_similarity
+        suspicious_keywords
+        explanation
+    """
+
+    parsed = urlparse(
+        url
+    )
+
+    domain = extract_domain(
+        url
+    )
+
+    indicators = []
+    suspicious_keywords = []
+
+    intelligence_score = 0
+
+    # -----------------------------------------------------
+    # IP-based domain
+    # -----------------------------------------------------
+
+    if detect_ip_domain(domain):
+
+        indicators.append(
+            "ip_based_domain"
+        )
+
+        intelligence_score += 20
+
+    # -----------------------------------------------------
+    # Brand impersonation
+    # -----------------------------------------------------
+
+    brand_similarity = (
+        detect_brand_impersonation(
+            domain
+        )
+    )
+
+    if (
+        brand_similarity
+        and not brand_similarity["is_legitimate"]
+    ):
+
+        indicators.append(
+            "brand_impersonation"
+        )
+
+        intelligence_score += 45
+
+    # -----------------------------------------------------
+    # Suspicious keywords
+    # -----------------------------------------------------
+
+    suspicious_keywords = (
+        detect_suspicious_keywords(
+            url
+        )
+    )
+
+    if suspicious_keywords:
+
+        indicators.append(
+            "suspicious_keywords"
+        )
+
+        intelligence_score += min(
+            len(suspicious_keywords) * 5,
+            20,
+        )
+
+    # -----------------------------------------------------
+    # Suspicious TLD
+    # -----------------------------------------------------
+
+    if detect_suspicious_tld(
+        domain
+    ):
+
+        indicators.append(
+            "suspicious_tld"
+        )
+
+        intelligence_score += 15
+
+    # -----------------------------------------------------
+    # URL length
+    # -----------------------------------------------------
+
+    length_score = (
+        calculate_url_length_score(
+            url
+        )
+    )
+
+    if length_score > 0:
+
+        indicators.append(
+            "unusually_long_url"
+        )
+
+        intelligence_score += (
+            length_score
+        )
+
+    # -----------------------------------------------------
+    # Subdomains
+    # -----------------------------------------------------
+
+    subdomain_score = (
+        calculate_subdomain_score(
+            domain
+        )
+    )
+
+    if subdomain_score > 0:
+
+        indicators.append(
+            "excessive_subdomains"
+        )
+
+        intelligence_score += (
+            subdomain_score
+        )
+
+    # -----------------------------------------------------
+    # Obfuscation
+    # -----------------------------------------------------
+
+    obfuscation_indicators = (
+        detect_obfuscation(
+            url
+        )
+    )
+
+    if obfuscation_indicators:
+
+        indicators.extend(
+            obfuscation_indicators
+        )
+
+        intelligence_score += min(
+            len(obfuscation_indicators) * 10,
+            25,
+        )
+
+    # -----------------------------------------------------
+    # Suspicious path
+    # -----------------------------------------------------
+
+    path_indicators = (
+        detect_suspicious_path(
+            parsed
+        )
+    )
+
+    if path_indicators:
+
+        indicators.extend(
+            path_indicators
+        )
+
+        intelligence_score += min(
+            len(path_indicators) * 5,
+            10,
+        )
+
+    # -----------------------------------------------------
+    # HTTPS
+    # -----------------------------------------------------
+
+    if parsed.scheme.lower() != "https":
+
+        indicators.append(
+            "not_https"
+        )
+
+        intelligence_score += 5
+
+    # -----------------------------------------------------
+    # Clamp score
+    # -----------------------------------------------------
+
+    intelligence_score = min(
+        intelligence_score,
+        100,
+    )
+
+    # -----------------------------------------------------
+    # Explanation
+    # -----------------------------------------------------
+
+    if intelligence_score >= 70:
+
+        explanation = (
+            "Strong phishing indicators detected."
+        )
+
+    elif intelligence_score >= 40:
+
+        explanation = (
+            "Multiple suspicious URL indicators detected."
+        )
+
+    elif intelligence_score >= 20:
+
+        explanation = (
+            "Some suspicious URL characteristics detected."
+        )
+
+    else:
+
+        explanation = (
+            "No significant URL-level phishing indicators detected."
+        )
+
+    return {
+        "intelligence_score": intelligence_score,
+        "indicators": indicators,
+        "suspicious_keywords": suspicious_keywords,
+        "brand_similarity": brand_similarity,
+        "explanation": explanation,
+    }
